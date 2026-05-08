@@ -1,7 +1,7 @@
 # pipeline-lab
 
 A tiny FastAPI service used as a hands-on lab for Docker, pytest, and GitHub Actions CI/CD.
-Part of the [ai-devops-lab](../) 30-week learning sprint.
+Part of the [ai-devops-lab](https://github.com/vaishnavipatil2298/ai-devops-lab.git).\30-week learning sprint>
 
 ## What's here (Week 1)
 
