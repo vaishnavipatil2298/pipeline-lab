@@ -32,3 +32,22 @@ def test_todos_have_expected_shape():
     assert isinstance(todo["id"], int)
     assert isinstance(todo["title"], str)
     assert isinstance(todo["done"], bool)
+
+
+def test_get_existing_todo_returns_it():
+    response = client.get("/todos/1")
+    assert response.status_code == 200
+    todo = response.json()
+    assert todo["id"] == 1
+    assert set(todo.keys()) == {"id", "title", "done"}
+
+
+def test_get_nonexistent_todo_returns_404():
+    response = client.get("/todos/9999")
+    assert response.status_code == 404
+    assert "detail" in response.json()
+
+
+def test_get_todo_with_non_integer_id_returns_422():
+    response = client.get("/todos/abc")
+    assert response.status_code == 422

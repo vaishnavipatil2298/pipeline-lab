@@ -3,7 +3,7 @@ pipeline-lab: a tiny FastAPI service used to practice Docker + CI/CD + testing.
 
 Week 1 goal: two endpoints, tested with pytest, containerized, running in GitHub Actions.
 """
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 app = FastAPI(title="pipeline-lab", version="0.1.0")
 
@@ -25,3 +25,12 @@ def health():
 def list_todos():
     """Return all todos."""
     return {"todos": _todos, "count": len(_todos)}
+
+
+@app.get("/todos/{todo_id}")
+def get_todo(todo_id: int):
+    """Return a single todo by id, or 404 if it doesn't exist."""
+    for todo in _todos:
+        if todo["id"] == todo_id:
+            return todo
+    raise HTTPException(status_code=404, detail="Todo not found")
