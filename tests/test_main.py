@@ -107,3 +107,43 @@ def test_update_todo_persists_changes():
     assert fetched["title"] == "after"
     assert fetched["done"] is True
 
+def test_todos_persist_across_app_restarts():
+    # ARRANGE: create a todo
+    response = client.post("/todos", json={"title": "Survive restart", "done": False})
+    todo_id = response.json()["id"]
+
+    # ACT: simulate a restart by re-importing a fresh app instance
+    from importlib import reload
+    import app.main
+    reload(app.main)
+    from app.main import app as fresh_app
+    from fastapi.testclient import TestClient
+    fresh_client = TestClient(fresh_app)
+
+    # ASSERT: the todo still exists in the fresh instance
+    get_response = fresh_client.get(f"/todos/{todo_id}")
+    assert get_response.status_code == 200
+    assert get_response.json()["title"] == "Survive restart"
+
+
+def test_delete_existing_todo_returns_204():
+    response = client.delete("/todos/1")
+    assert response.status_code == 204
+    assert response.content == b""
+
+
+def test_delete_removes_todo_from_list():
+    # Create a fresh todo, delete it, confirm it's gone.
+    created_id = client.post("/todos", json={"title": "delete me"}).json()["id"]
+
+    delete_response = client.delete(f"/todos/{created_id}")
+    assert delete_response.status_code == 204
+
+    get_response = client.get(f"/todos/{created_id}")
+    assert get_response.status_code == 404
+
+
+def test_delete_nonexistent_todo_returns_404():
+    response = client.delete("/todos/9999")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Todo not found"

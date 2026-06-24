@@ -1,12 +1,20 @@
 """
 pipeline-lab: a tiny FastAPI service used to practice Docker + CI/CD + testing.
 
-Week 1 goal: two endpoints, tested with pytest, containerized, running in GitHub Actions.
+Week 2 goal: persist todos in SQLite instead of an in-memory list.
+
+This module is the API layer only — it contains NO SQL. All storage access
+goes through app.database.
 """
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-app = FastAPI(title="pipeline-lab", version="0.1.0")
+from app import database
+
+app = FastAPI(title="pipeline-lab", version="0.2.0")
+
+# Ensure the table exists before we serve any requests. Idempotent.
+database.init_db()
 
 
 class TodoCreate(BaseModel):
@@ -18,13 +26,6 @@ class TodoUpdate(BaseModel):
     title: str | None = None
     done: bool | None = None
 
-# In-memory state for Week 1. We'll replace this with a real DB in Week 2.
-_todos = [
-    {"id": 1, "title": "Learn Docker", "done": False},
-    {"id": 2, "title": "Ship CI/CD pipeline", "done": False},
-    {"id": 3, "title": "Connect Claude Code to workflow", "done": False},
-]
-
 
 @app.get("/health")
 def health():
@@ -35,35 +36,42 @@ def health():
 @app.get("/todos")
 def list_todos():
     """Return all todos."""
-    return {"todos": _todos, "count": len(_todos)}
+    todos = database.get_all_todos()
+    return {"todos": todos, "count": len(todos)}
 
 
 @app.get("/todos/{todo_id}")
 def get_todo(todo_id: int):
     """Return a single todo by id, or 404 if it doesn't exist."""
-    for todo in _todos:
-        if todo["id"] == todo_id:
-            return todo
-    raise HTTPException(status_code=404, detail="Todo not found")
+    todo = database.get_todo(todo_id)
+    if todo is None:
+        raise HTTPException(status_code=404, detail="Todo not found")
+    return todo
 
 
 @app.post("/todos", status_code=201)
 def create_todo(payload: TodoCreate):
     """Create a new todo and return it with an auto-assigned id."""
-    new_id = max((t["id"] for t in _todos), default=0) + 1
-    new_todo = {"id": new_id, "title": payload.title, "done": payload.done}
-    _todos.append(new_todo)
-    return new_todo
+    return database.create_todo(payload.title, payload.done)
 
 
 @app.put("/todos/{todo_id}")
 def update_todo(todo_id: int, payload: TodoUpdate):
-    """Update an existing todo's title and/or done flag, or 404 if it doesn't exist."""
-    for todo in _todos:
-        if todo["id"] == todo_id:
-            if payload.title is not None:
-                todo["title"] = payload.title
-            if payload.done is not None:
-                todo["done"] = payload.done
-            return todo
-    raise HTTPException(status_code=404, detail="Todo not found")
+    """Update an existing todo's title and/or done flag, or 404 if missing.
+
+    Partial update: fields omitted from the payload keep their current value.
+    """
+    existing = database.get_todo(todo_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Todo not found")
+
+    new_title = payload.title if payload.title is not None else existing["title"]
+    new_done = payload.done if payload.done is not None else existing["done"]
+    return database.update_todo(todo_id, new_title, new_done)
+
+
+@app.delete("/todos/{todo_id}", status_code=204)
+def delete_todo(todo_id: int):
+    """Delete a todo by id. Return 204 on success, or 404 if it doesn't exist."""
+    if not database.delete_todo(todo_id):
+        raise HTTPException(status_code=404, detail="Todo not found")

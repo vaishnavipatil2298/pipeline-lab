@@ -10,3 +10,6 @@ venv/
 # uvicorn logs written by the run-pipeline-lab smoke driver
 .uvicorn*.log
 .uvicorn*.log.out
+
+# SQLite database files (created at runtime)
+*.db
