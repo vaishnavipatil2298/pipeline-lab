@@ -51,3 +51,31 @@ curl http://localhost:8000/health
 - **Week 2:** Add persistence + more tests
 - **Week 3:** Deploy + add Playwright E2E
 - **Week 4:** Add observability (logging, metrics)
+
+
+
+
+
+## Smoke Testing
+
+`scripts/smoke-test.ps1` verifies a running instance is healthy — starts the
+
+server, exercises all 8 endpoint behaviors, tears it down. Use it to check a
+
+local run or, once deployed, to verify the live instance:
+
+```powershell
+
+# Local
+
+.\scripts\smoke-test.ps1 -BaseUrl "[http://localhost:8000](http://localhost:8000)"
+
+# Deployed (Week 6+)
+
+.\scripts\smoke-test.ps1 -BaseUrl "[https://your-app.onrender.com](https://your-app.onrender.com)"
+
+```
+
+This complements pytest — pytest tests code logic in isolation on every commit;
+
+this smoke test verifies a real running instance after deployment.
