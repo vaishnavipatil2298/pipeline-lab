@@ -1,81 +1,193 @@
 # pipeline-lab
 
-A tiny FastAPI service used as a hands-on lab for Docker, pytest, and GitHub Actions CI/CD.
-Part of the [ai-devops-lab](https://github.com/vaishnavipatil2298/ai-devops-lab.git).\30-week learning sprint>
+A small FastAPI todos API built as a hands-on lab for the whole delivery
+pipeline: tests → Docker → CI → managed Postgres → Terraform → Kubernetes →
+observability.
 
-## What's here (Week 1)
+- **Live:** https://pipeline-lab.onrender.com
+- **Repo:** https://github.com/vaishnavipatil2298/pipeline-lab
 
-- FastAPI app with `/health` and `/todos` endpoints
-- pytest tests
-- Dockerfile
-- GitHub Actions workflow that runs tests + builds the container on every push
+## Endpoints
 
-## What's coming (Weeks 2–4)
+| Method | Path          | Description                          |
+| ------ | ------------- | ------------------------------------ |
+| GET    | `/health`     | liveness check                       |
+| GET    | `/todos`      | list todos                           |
+| GET    | `/todos/{id}` | get one todo (404 if missing)        |
+| POST   | `/todos`      | create a todo (201)                  |
+| PUT    | `/todos/{id}` | partial update (404 if missing)      |
+| DELETE | `/todos/{id}` | delete (204, 404 if missing)         |
+| GET    | `/metrics`    | Prometheus metrics                   |
 
-- Real database (SQLite → Postgres)
-- Playwright end-to-end tests
-- Deployment to Render or Fly.io
-- Claude Code + MCP integration for automated code review
+Interactive docs at `/docs`.
+
+## Architecture
+
+```
+app/main.py       API layer only — contains no SQL
+      │
+      ▼
+app/database.py   all storage access; the same five functions for every backend
+      │
+      ├── DATABASE_URL set  →  Postgres (psycopg 3)
+      └── otherwise         →  SQLite file (DB_PATH)
+```
+
+The backend is chosen at call time from the environment, so `main.py` never
+changes when storage does. Postgres runs in production and containers; SQLite
+keeps local runs and the fast test job dependency-free.
+
+### Why Postgres
+
+SQLite lives in a file on the web service's disk. Render's free tier has an
+ephemeral filesystem, so that file (and every todo in it) disappeared on each
+restart or redeploy. Data now lives in a managed Postgres instance, which
+survives restarts.
 
 ## Run locally
 
 ```bash
-# Install dependencies
+python -m venv .venv
+.venv\Scripts\activate            # or: source .venv/bin/activate
 pip install -r requirements.txt
 
-# Start the server
+# SQLite (zero setup):
 uvicorn app.main:app --reload
 
-# Run tests
+# or point at Postgres:
+docker run -d --name pl-pg -p 5432:5432 \
+  -e POSTGRES_USER=pipeline_lab -e POSTGRES_PASSWORD=pipeline_lab \
+  -e POSTGRES_DB=pipeline_lab postgres:16-alpine
+# then: set DATABASE_URL=postgresql://pipeline_lab:pipeline_lab@localhost:5432/pipeline_lab
+```
+
+Visit http://localhost:8000/docs. Copy `.env.example` for the full set of
+environment variables.
+
+## Tests
+
+```bash
+pytest -v                       # SQLite by default
+```
+
+The same suite runs against Postgres when `TEST_DATABASE_URL` is set:
+
+```bash
+export TEST_DATABASE_URL=postgresql://pipeline_lab:pipeline_lab@localhost:5432/pipeline_lab
 pytest -v
 ```
 
-Visit `http://localhost:8000/docs` for the interactive API docs.
+Every test resets the table first, so auto-assigned ids line up on both
+backends.
 
-## Run with Docker
+## Docker
 
 ```bash
-# Build image
 docker build -t pipeline-lab .
-
-# Run container
-docker run -p 8000:8000 pipeline-lab
-
-# Check health
-curl http://localhost:8000/health
+docker run -p 8000:8000 -e DATABASE_URL="postgresql://user:pass@host:5432/db" pipeline-lab
 ```
 
-## Weekly progress
+## Full local stack (app + Postgres + Prometheus + Grafana)
 
-- **Week 1:** Scaffolding + CI pipeline green
-- **Week 2:** Add persistence + more tests
-- **Week 3:** Deploy + add Playwright E2E
-- **Week 4:** Add observability (logging, metrics)
+```bash
+docker compose up --build
+```
 
+| Service    | URL                              |
+| ---------- | -------------------------------- |
+| app        | http://localhost:8000            |
+| Prometheus | http://localhost:9090            |
+| Grafana    | http://localhost:3000 (admin/admin) |
 
+Grafana is provisioned with the Prometheus datasource and a `pipeline-lab`
+dashboard: total requests, request rate, 5xx rate, per-handler/status
+breakdown, and p50/p95 latency. If a host port is already taken it can be
+remapped, e.g.:
 
+```bash
+APP_PORT=18000 PROMETHEUS_PORT=19090 GRAFANA_PORT=13000 docker compose up
+```
 
-
-## Smoke Testing
-
-`scripts/smoke-test.ps1` verifies a running instance is healthy — starts the
-
-server, exercises all 8 endpoint behaviors, tears it down. Use it to check a
-
-local run or, once deployed, to verify the live instance:
+## Kubernetes (minikube)
 
 ```powershell
-
-# Local
-
-.\scripts\smoke-test.ps1 -BaseUrl "[http://localhost:8000](http://localhost:8000)"
-
-# Deployed (Week 6+)
-
-.\scripts\smoke-test.ps1 -BaseUrl "[https://your-app.onrender.com](https://your-app.onrender.com)"
-
+pwsh -File .\scripts\deploy-minikube.ps1
+kubectl -n pipeline-lab port-forward svc/pipeline-lab 8080:80
+curl http://127.0.0.1:8080/health
 ```
 
-This complements pytest — pytest tests code logic in isolation on every commit;
+`k8s/` holds the manifests (kustomize): the app plus an in-cluster Postgres
+backed by a PersistentVolumeClaim, so data survives pod restarts.
+`kubectl apply -k k8s` applies them directly.
 
-this smoke test verifies a real running instance after deployment.
+## Terraform (Render)
+
+`infra/terraform/` provisions the managed Postgres instance — and, optionally,
+the web service — as code.
+
+```powershell
+$env:RENDER_API_KEY  = "rnd_..."
+$env:RENDER_OWNER_ID = "tea-..."
+cd infra/terraform
+terraform init
+terraform plan
+terraform apply
+```
+
+Only the database is managed by default (`manage_web_service = false`), so an
+existing live service is left untouched. To bring the current service under
+Terraform instead of creating a second one, set `manage_web_service = true`
+in your tfvars and import it:
+
+```bash
+terraform import 'render_web_service.app[0]' <srv-xxxxx>
+```
+
+`terraform output -raw postgres_internal_connection_string` returns the
+`DATABASE_URL` to set on the service (Terraform wires it automatically when it
+manages the service). Keep `region` aligned with the web service so the
+internal URL is reachable.
+
+## Smoke test
+
+`scripts/smoke-test.ps1` drives a running instance end to end — create, read,
+update, delete, the 404 paths, and `/metrics`. It targets the live deployment
+by default and works against an empty database.
+
+```powershell
+pwsh -File .\scripts\smoke-test.ps1                      # live Render
+pwsh -File .\scripts\smoke-test.ps1 -Local               # launch a local SQLite server
+pwsh -File .\scripts\smoke-test.ps1 -BaseUrl "http://localhost:8000"
+```
+
+## CI
+
+`.github/workflows/ci.yml` runs on every push and PR:
+
+1. **Tests (SQLite)** — the default suite.
+2. **Tests (Postgres)** — the same suite against a Postgres service container.
+3. **Build and smoke test container** — builds the image and checks `/health`.
+
+## Project layout
+
+```
+app/                 FastAPI app + database layer
+tests/               pytest suite (SQLite + Postgres)
+scripts/             smoke test, minikube deploy
+k8s/                 Kubernetes manifests (kustomize)
+infra/terraform/     Render Postgres + web service as code
+observability/       Prometheus config + provisioned Grafana dashboard
+Dockerfile           container image
+docker-compose.yml   app + Postgres + Prometheus + Grafana
+```
+
+## Deployment flow (Render)
+
+1. `terraform apply` creates the Postgres instance.
+2. Set its internal connection string as `DATABASE_URL` on the web service
+   (automatic when `manage_web_service = true`).
+3. Render redeploys and `init_db()` creates the table on first boot.
+4. Restart the service to confirm todos persist.
+
+Persistence across process restarts has been verified against a real Postgres
+both locally and in minikube.

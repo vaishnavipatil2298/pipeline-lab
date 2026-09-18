@@ -1,10 +1,12 @@
 """
 Shared pytest fixtures for pipeline-lab.
 
-Goal: every test runs against its own fresh SQLite database so tests stay
-isolated and don't pollute each other. We do this by pointing DB_PATH at a
-per-test temp file, creating the schema, and seeding the same starting todos
-the app shipped with.
+Every test runs against its own isolated, freshly-seeded database:
+
+* By default that's a per-test SQLite file (fast, no external services).
+* Set ``TEST_DATABASE_URL`` to a Postgres URL to run the exact same suite
+  against Postgres. The table is truncated and its identity reset before each
+  test, so auto-assigned ids line up with the SQLite run.
 """
 import os
 
@@ -20,18 +22,30 @@ _SEED_TODOS = [
 ]
 
 
+def _reset_postgres_table() -> None:
+    """Empty the todos table and restart ids at 1 (Postgres-only)."""
+    with database._connection() as conn:
+        conn.execute("TRUNCATE todos RESTART IDENTITY")
+
+
 @pytest.fixture(autouse=True)
 def fresh_db(tmp_path, monkeypatch):
     """Give each test an isolated, freshly-seeded database.
 
-    `tmp_path` is unique per test, so pointing DB_PATH there guarantees no
-    state leaks between tests. We then create the schema and seed the default
-    todos. `monkeypatch` restores the original DB_PATH after the test.
+    When ``TEST_DATABASE_URL`` is set we point the app at Postgres and reset the
+    table before every test. Otherwise we use a unique per-test SQLite file so
+    no state leaks between tests. ``monkeypatch`` restores the environment after.
     """
-    db_file = tmp_path / "todos.db"
-    monkeypatch.setenv("DB_PATH", str(db_file))
+    test_url = os.environ.get("TEST_DATABASE_URL")
+    if test_url:
+        monkeypatch.setenv("DATABASE_URL", test_url)
+        database.init_db()
+        _reset_postgres_table()
+    else:
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        monkeypatch.setenv("DB_PATH", str(tmp_path / "todos.db"))
+        database.init_db()
 
-    database.init_db()
     for title, done in _SEED_TODOS:
         database.create_todo(title, done)
 
