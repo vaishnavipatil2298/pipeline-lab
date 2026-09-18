@@ -1,20 +1,26 @@
 """
 pipeline-lab: a tiny FastAPI service used to practice Docker + CI/CD + testing.
 
-Week 2 goal: persist todos in SQLite instead of an in-memory list.
-
 This module is the API layer only — it contains NO SQL. All storage access
-goes through app.database.
+goes through app.database, which transparently targets Postgres (when
+DATABASE_URL is set) or a local SQLite file otherwise.
+
+Prometheus metrics are exposed at /metrics via prometheus-fastapi-instrumentator.
 """
 from fastapi import FastAPI, HTTPException
+from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel
 
 from app import database
 
-app = FastAPI(title="pipeline-lab", version="0.2.0")
+app = FastAPI(title="pipeline-lab", version="1.0.0")
 
 # Ensure the table exists before we serve any requests. Idempotent.
 database.init_db()
+
+# Instrument every request (count, latency, status) and expose them for
+# Prometheus to scrape. Kept out of the OpenAPI schema.
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
 
 class TodoCreate(BaseModel):

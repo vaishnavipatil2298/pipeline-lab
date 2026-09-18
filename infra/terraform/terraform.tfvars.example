@@ -1,0 +1,9 @@
+# Copy to terraform.tfvars (which is gitignored) and fill in as needed.
+# Credentials are better supplied through env vars, not this file:
+#
+#   $env:RENDER_API_KEY  = "rnd_..."
+#   $env:RENDER_OWNER_ID = "tea-..."
+#
+# region = "oregon"
+# postgres_plan = "free"
+# manage_web_service = false

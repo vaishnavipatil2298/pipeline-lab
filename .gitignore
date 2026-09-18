@@ -13,3 +13,12 @@ venv/
 
 # SQLite database files (created at runtime)
 *.db
+
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+!*.tfvars.example
+.terraform.tfstate.lock.info
